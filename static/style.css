@@ -215,3 +215,77 @@ label small { font-size: 14px; font-weight: 400; color: var(--muted); display: b
 @media (prefers-reduced-motion: no-preference) {
   button, input, select, textarea { transition: background-color .12s, border-color .12s; }
 }
+/* Compact rule management, with the same controls on narrow screens. */
+:root { --accent: #1668dc; --ink: #202733; --bg: #f5f6f8; --line: #e0e4e9; }
+.nav.active { color: #0958c5; background: #e6f4ff; }
+.primary:hover { background: #0958c5; }
+main { max-width: none; padding: 24px; }
+.rules-panel { border-radius: 8px; }
+.rules-panel .panel-heading { justify-content: flex-start; border-bottom: 1px solid var(--line); padding: 18px 24px; }
+.rules-panel h1 { font-size: 21px; margin-right: 12px; white-space: nowrap; }
+.rules-panel .search { width: 300px; max-width: 100%; }
+.rules-panel .search input { min-height: 40px; padding: 8px 12px; font-size: 15px; }
+.rules-panel .secondary, .rules-panel .primary { min-height: 40px; padding: 8px 14px; }
+.rules-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 18px 24px 0; color: var(--muted); font-size: 14px; min-height: 48px; }
+.rules-summary > span { background: #f8f9fb; border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; }
+.rules-summary .text-button { min-height: 28px; padding: 2px 4px; font-size: 14px; }
+.rules-toolbar { display: flex; flex-wrap: wrap; gap: 10px; padding: 16px 24px; align-items: center; }
+svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.rules-table { min-width: 900px; table-layout: fixed; }
+.rules-table th { font-size: 15px; font-weight: 650; background: #f8f9fb; }
+.rules-table th, .rules-table td { padding: 16px; }
+.rules-table th:first-child.rule-select-cell { width: 48px; }
+.rules-table th:nth-last-child(5) { width: 18%; }
+.rules-table th:nth-last-child(4) { width: 18%; }
+.rules-table th:nth-last-child(3) { width: 22%; }
+.rules-table th:nth-last-child(2) { width: 16%; }
+.rules-table th:last-child { width: 168px; }
+.rules-table .rule-select-cell { padding: 12px 6px; text-align: center; }
+.rules-table td { font-size: 16px; vertical-align: middle; }
+.rules-table td strong { font-weight: 500; }
+.rules-table .cell-sub { margin-top: 6px; font-size: 14px; }
+.rules-table .mono { font-size: 14px; }
+.rules-table .tunnel-note { font-size: 13px; }
+.rules-table tr:hover td { background: #fafcff; }
+.rules-table tr.selected td { background: #eaf4ff; }
+.rules-table .row-actions { flex-wrap: nowrap; gap: 6px; }
+.row-icon { border: 1px solid #cbd3df; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; height: 34px; width: 34px; color: #364355; flex-shrink: 0; }
+.row-icon:hover { border-color: var(--accent); color: var(--accent); background: #edf5ff; }
+.check-control { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin: 0; width: 34px; min-height: 34px; cursor: pointer; }
+input[type=checkbox] { width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+input[type=checkbox]:focus { box-shadow: none; outline: 2px solid var(--accent); outline-offset: 3px; }
+.mobile-select-all { display: none; width: auto; font-size: 15px; font-weight: 400; }
+.check-option { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.import-source { min-height: 180px; resize: vertical; font-family: ui-monospace, monospace; font-size: 14px; line-height: 1.6; }
+.import-preview { min-width: 440px; }
+.import-preview th, .import-preview td { padding: 12px; font-size: 14px; }
+.delete-list { max-height: 250px; overflow-y: auto; padding-left: 24px; font-size: 16px; }
+.delete-list li { padding: 4px 0; overflow-wrap: anywhere; }
+@media (max-width: 1000px) {
+  .rules-table { min-width: 0; table-layout: auto; }
+  .rules-table thead { display: none; }
+  .rules-table tr { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 18px; border-top: 1px solid var(--line); }
+  .rules-table td, .rules-table .rule-select-cell { display: block; padding: 0; border: 0; min-width: 0; }
+  .rules-table .rule-select-cell { grid-column: 1; grid-row: 1; }
+  .rules-table .rule-name-cell { grid-column: 2; grid-row: 1; }
+  .rules-table .rule-name-cell strong { font-size: 18px; font-weight: 600; }
+  .rules-table .rule-entry-cell, .rules-table .rule-exit-cell, .rules-table .rule-status-cell, .rules-table .rule-ops-cell { grid-column: 2; }
+  .rules-table td[data-label]:before { content: attr(data-label); display: block; margin-bottom: 5px; font-size: 14px; color: var(--muted); }
+  .rules-table tr.selected { background: #eaf4ff; }
+  .rules-table tr.selected td, .rules-table tr:hover td { background: transparent; }
+  .rules-table .row-actions { gap: 12px; }
+  .row-icon { width: 40px; height: 40px; }
+  .mobile-select-all { display: inline-flex; }
+  .rules-panel .panel-heading { flex-wrap: wrap; gap: 12px; }
+  .rules-panel .search { width: auto; flex: 1; min-width: 170px; }
+}
+@media (max-width: 760px) {
+  main { padding: 8px 12px 24px; }
+  .rules-panel .panel-heading { padding: 16px; }
+  .rules-panel h1 { width: 100%; }
+  .rules-summary { padding: 14px 16px 0; gap: 8px; }
+  .rules-toolbar { padding: 14px 16px; gap: 8px; }
+  .rules-panel .primary, .rules-panel .secondary { font-size: 14px; padding: 8px 10px; }
+  .rules-panel .search { min-width: 150px; }
+  .rules-table tr { padding: 16px; }
+}

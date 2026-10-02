@@ -64,6 +64,12 @@ def main():
     entry_group, _ = call('/api/groups', {'name':'CI direct entry','role':'entry'})
     direct, _ = call('/api/rules', {'name':'CI direct rule','mode':'direct','entry_id':entry_group['id'],
         'exit_id':None,'listen_port':18080,'protocol':'udp','targets':'127.0.0.1:19080'})
+    exported, _ = call('/api/rules/export', {'ids':[direct['id']]})
+    preview, _ = call('/api/rules/import-preview', {'document':exported,'options':{'reset_ports':True}})
+    imported, _ = call('/api/rules/import', {'document':preview['document']})
+    deleted, _ = call('/api/rules/batch-delete', {'ids':imported['ids']})
+    if deleted['deleted'] != 1:
+        raise RuntimeError('Installed panel batch import/export/delete failed')
     before_cert = Path('/var/lib/gost-panel/panel-cert.pem').read_bytes()
     result, _ = call('/api/upgrade', {})
     if result['state'] != 'queued':

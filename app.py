@@ -97,9 +97,9 @@ class Handler(BaseHTTPRequestHandler):
             for chunk in iter(lambda: source.read(128 * 1024), b''):
                 self.wfile.write(chunk)
 
-    def body(self):
+    def body(self, maximum=65536):
         length = int(self.headers.get('Content-Length', '0'))
-        if not 0 < length <= 65536:
+        if not 0 < length <= maximum:
             raise ValueError('请求内容为空或过大')
         value = json.loads(self.rfile.read(length))
         if not isinstance(value, dict):
@@ -277,6 +277,19 @@ class Handler(BaseHTTPRequestHandler):
                                          'script': install_script(self.server.public_url, self.server.certificate, token),
                                          'expires_in': None})
         if len(parts) >= 2 and parts[:2] == ['api', 'rules']:
+            if len(parts) == 3 and parts[2] == 'export' and method == 'GET':
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query, max_num_fields=1)
+                ids = json.loads(query['ids'][0]) if 'ids' in query else None
+                return self.respond(200, store.export_rules(ids), extra={
+                    'Content-Disposition':'attachment; filename="gost-rules-' + time.strftime('%Y-%m-%d') + '.json"'})
+            if len(parts) == 3 and parts[2] == 'export' and method == 'POST':
+                return self.respond(200, store.export_rules(self.body().get('ids')))
+            if len(parts) == 3 and parts[2] == 'batch-delete' and method == 'POST':
+                return self.respond(200, {'deleted':store.delete_rules(self.body().get('ids'))})
+            if len(parts) == 3 and parts[2] in ('import-preview','import') and method == 'POST':
+                data = self.body(8 * 1024 * 1024)
+                return self.respond(200 if parts[2]=='import-preview' else 201,
+                    store.import_rules(data.get('document'),data.get('options'),preview=parts[2]=='import-preview'))
             if len(parts) == 4 and parts[3] == 'diagnose' and method == 'POST':
                 self.connection.settimeout(40)
                 return self.respond(200, diagnose(store, parts[2]))

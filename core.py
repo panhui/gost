@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-PANEL_VERSION = '0.4.0'
+PANEL_VERSION = '0.5.0'
 GOST_VERSION = '3.3.0'
 CHECKSUMS = {
     'amd64': '676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5',
@@ -349,54 +349,58 @@ class Store:
 
     def save_rule(self, data, rule_id=None):
         with self.lock, self.db:
-            old = None
-            if rule_id:
-                row = self.db.execute('SELECT * FROM rules WHERE id=?', (rule_id,)).fetchone()
-                if not row:
-                    raise ValueError('规则不存在')
-                old = dict(row)
-            mode = data.get('mode', 'direct' if 'exit_id' in data and data['exit_id'] is None else 'tunnel')
-            if mode not in ('direct', 'tunnel'):
-                raise ValueError('转发模式必须为 direct 或 tunnel')
-            entry = self.group(data.get('entry_id'))
-            exit_node = None if mode == 'direct' else self.group(data.get('exit_id'))
-            if entry['role'] != 'entry' or (exit_node and exit_node['role'] != 'exit'):
-                raise ValueError('请选择入口设备组和出口设备组')
-            protocol = data.get('protocol', 'tcp')
-            if protocol not in ('tcp', 'udp'):
-                raise ValueError('仅支持 TCP 或 UDP')
-            listen = data.get('listen_port')
-            if not listen:
-                used_entry = self.reserved_ports(entry['id'], 'entry', protocol, rule_id)
-                available = [p for p in range(2000, 60001) if p not in used_entry]
-                if not available:
-                    raise ValueError('入口没有可用的自动分配端口')
-                listen = secrets.choice(available)
-            listen = port(listen)
-            tunnel = data.get('tunnel_port') if exit_node else None
-            if exit_node and not tunnel:
-                used = self.reserved_ports(exit_node['id'], 'exit', 'tcp', rule_id)
-                tunnel = next((p for p in range(20000, 60000) if p not in used), None)
-                if tunnel is None:
-                    raise ValueError('出口没有可用的自动分配端口')
-            tunnel = port(tunnel) if exit_node else None
-            target_list = targets(data['targets']) if 'targets' in data else [{'host': host(data.get('target_host', '')), 'port': port(data.get('target_port'))}]
-            title, target, target_port = name(data.get('name', '')), target_list[0]['host'], target_list[0]['port']
-            if type(data.get('enabled', True)) is not bool:
-                raise ValueError('enabled 必须为布尔值')
-            values = (title, protocol, entry['id'], exit_node['id'] if exit_node else None, listen, tunnel, target,
-                      target_port, int(data.get('enabled', True)), old['secret'] if old else secrets.token_urlsafe(32), json.dumps(target_list))
-            try:
-                if old:
-                    self.db.execute('UPDATE rules SET name=?,protocol=?,entry_id=?,exit_id=?,listen_port=?,tunnel_port=?,target_host=?,target_port=?,enabled=?,secret=?,targets_json=? WHERE id=?', values + (rule_id,))
-                else:
-                    rule_id = secrets.token_hex(8)
-                    self.db.execute('INSERT INTO rules(id,name,protocol,entry_id,exit_id,listen_port,tunnel_port,target_host,target_port,enabled,secret,targets_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', (rule_id,) + values)
-            except sqlite3.IntegrityError:
-                raise ValueError('入口监听端口或出口隧道端口已被其他规则使用')
-            self.validate_group_ports()
-            self.audit('保存规则：' + title)
-            return rule_id
+            return self._save_rule(data, rule_id)
+
+    def _save_rule(self, data, rule_id=None):
+        # Caller owns the lock and transaction, including a whole batch import.
+        old = None
+        if rule_id:
+            row = self.db.execute('SELECT * FROM rules WHERE id=?', (rule_id,)).fetchone()
+            if not row:
+                raise ValueError('规则不存在')
+            old = dict(row)
+        mode = data.get('mode', 'direct' if 'exit_id' in data and data['exit_id'] is None else 'tunnel')
+        if mode not in ('direct', 'tunnel'):
+            raise ValueError('转发模式必须为 direct 或 tunnel')
+        entry = self.group(data.get('entry_id'))
+        exit_node = None if mode == 'direct' else self.group(data.get('exit_id'))
+        if entry['role'] != 'entry' or (exit_node and exit_node['role'] != 'exit'):
+            raise ValueError('请选择入口设备组和出口设备组')
+        protocol = data.get('protocol', 'tcp')
+        if protocol not in ('tcp', 'udp'):
+            raise ValueError('仅支持 TCP 或 UDP')
+        listen = data.get('listen_port')
+        if not listen:
+            used_entry = self.reserved_ports(entry['id'], 'entry', protocol, rule_id)
+            available = [p for p in range(2000, 60001) if p not in used_entry]
+            if not available:
+                raise ValueError('入口没有可用的自动分配端口')
+            listen = secrets.choice(available)
+        listen = port(listen)
+        tunnel = data.get('tunnel_port') if exit_node else None
+        if exit_node and not tunnel:
+            used = self.reserved_ports(exit_node['id'], 'exit', 'tcp', rule_id)
+            tunnel = next((p for p in range(20000, 60000) if p not in used), None)
+            if tunnel is None:
+                raise ValueError('出口没有可用的自动分配端口')
+        tunnel = port(tunnel) if exit_node else None
+        target_list = targets(data['targets']) if 'targets' in data else [{'host': host(data.get('target_host', '')), 'port': port(data.get('target_port'))}]
+        title, target, target_port = name(data.get('name', '')), target_list[0]['host'], target_list[0]['port']
+        if type(data.get('enabled', True)) is not bool:
+            raise ValueError('enabled 必须为布尔值')
+        values = (title, protocol, entry['id'], exit_node['id'] if exit_node else None, listen, tunnel, target,
+                  target_port, int(data.get('enabled', True)), old['secret'] if old else secrets.token_urlsafe(32), json.dumps(target_list))
+        try:
+            if old:
+                self.db.execute('UPDATE rules SET name=?,protocol=?,entry_id=?,exit_id=?,listen_port=?,tunnel_port=?,target_host=?,target_port=?,enabled=?,secret=?,targets_json=? WHERE id=?', values + (rule_id,))
+            else:
+                rule_id = secrets.token_hex(8)
+                self.db.execute('INSERT INTO rules(id,name,protocol,entry_id,exit_id,listen_port,tunnel_port,target_host,target_port,enabled,secret,targets_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', (rule_id,) + values)
+        except sqlite3.IntegrityError:
+            raise ValueError('入口监听端口或出口隧道端口已被其他规则使用')
+        self.validate_group_ports()
+        self.audit('保存规则：' + title)
+        return rule_id
 
     def delete_rule(self, rule_id):
         with self.lock, self.db:
@@ -405,6 +409,114 @@ class Store:
                 raise ValueError('规则不存在')
             self.db.execute('DELETE FROM rules WHERE id=?', (rule_id,))
             self.audit('删除规则：' + row[0])
+
+    @staticmethod
+    def batch_ids(ids):
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 500 or any(not isinstance(i, str) for i in ids):
+            raise ValueError('请选择 1–500 条规则')
+        if len(set(ids)) != len(ids):
+            raise ValueError('所选规则重复')
+        return ids
+
+    def selected_rules(self, ids=None):
+        if ids is None:
+            rows = self.db.execute('SELECT * FROM rules ORDER BY rowid').fetchall()
+            if len(rows) > 500:
+                raise ValueError('一次最多导出 500 条规则，请选择后分批导出')
+        else:
+            ids = self.batch_ids(ids)
+            rows = self.db.execute('SELECT * FROM rules WHERE id IN (' + ','.join('?' for _ in ids) + ') ORDER BY rowid', ids).fetchall()
+            if len(rows) != len(ids):
+                raise ValueError('部分规则已被删除，请刷新后重新选择')
+        return [dict(r) for r in rows]
+
+    def portable_rule(self, rule):
+        def reference(group_id):
+            group = self.group(group_id)
+            return {'id': group['id'], 'name': group['name']}
+        target_list = json.loads(rule['targets_json']) or [{'host':rule['target_host'],'port':rule['target_port']}]
+        return {'name':rule['name'], 'mode':'direct' if rule['exit_id'] is None else 'tunnel',
+                'entry_group':reference(rule['entry_id']), 'exit_group':reference(rule['exit_id']) if rule['exit_id'] else None,
+                'protocol':rule['protocol'], 'listen_port':rule['listen_port'], 'tunnel_port':rule['tunnel_port'],
+                'targets':[address(t['host'], t['port']) for t in target_list], 'enabled':bool(rule['enabled'])}
+
+    def export_rules(self, ids=None):
+        with self.lock:
+            return {'format':'gost-panel-rules','version':1,'rules':[self.portable_rule(r) for r in self.selected_rules(ids)]}
+
+    def delete_rules(self, ids):
+        with self.lock, self.db:
+            rows = self.selected_rules(self.batch_ids(ids))
+            self.db.execute('DELETE FROM rules WHERE id IN (' + ','.join('?' for _ in ids) + ')', ids)
+            self.audit('批量删除规则：' + str(len(rows)) + ' 条')
+            return len(rows)
+
+    def resolve_import_group(self, reference, role, override=None):
+        if override:
+            group = self.group(override)
+            if group['role'] != role:
+                raise ValueError('指定的设备组类型错误')
+            return group['id']
+        if not isinstance(reference, dict):
+            raise ValueError('缺少' + ('入口' if role == 'entry' else '出口') + '设备组信息')
+        group_id, title = reference.get('id'), reference.get('name')
+        if group_id is not None and not isinstance(group_id, str) or title is not None and not isinstance(title, str):
+            raise ValueError('设备组 ID 和名称必须为字符串')
+        row = self.db.execute('SELECT id,role FROM groups WHERE id=?', (group_id,)).fetchone()
+        if row:
+            if row['role'] != role:
+                raise ValueError('设备组类型错误')
+            return row['id']
+        matches = self.db.execute('SELECT id FROM groups WHERE name=? AND role=?', (title,role)).fetchall()
+        if len(matches) == 1:
+            return matches[0]['id']
+        raise ValueError('无法唯一匹配设备组「' + str(title or group_id or '') + '」，请先创建或手动指定设备组')
+
+    def _import_rules(self, document, options):
+        if not isinstance(document, dict) or document.get('format') != 'gost-panel-rules' or type(document.get('version')) is not int or document['version'] != 1:
+            raise ValueError('请选择本面板导出的规则 JSON（格式版本 1）')
+        rules = document.get('rules')
+        if not isinstance(rules, list) or not 1 <= len(rules) <= 500:
+            raise ValueError('一次可导入 1–500 条规则')
+        if not isinstance(options, dict) or type(options.get('reset_ports',False)) is not bool:
+            raise ValueError('导入选项无效')
+        for key in ('entry_group_id','exit_group_id'):
+            if options.get(key) is not None and not isinstance(options[key],str):
+                raise ValueError('指定的设备组 ID 无效')
+        ids, portable = [], []
+        for index, rule in enumerate(rules, 1):
+            try:
+                if not isinstance(rule,dict):
+                    raise ValueError('规则必须为 JSON 对象')
+                mode = rule.get('mode')
+                if mode not in ('direct','tunnel'):
+                    raise ValueError('请指定 direct 或 tunnel 转发模式')
+                entry_id = self.resolve_import_group(rule.get('entry_group'),'entry',options.get('entry_group_id'))
+                exit_id = self.resolve_import_group(rule.get('exit_group'),'exit',options.get('exit_group_id')) if mode=='tunnel' else None
+                data = {key:rule[key] for key in ('name','protocol','targets','enabled') if key in rule}
+                data.update({'mode':mode,'entry_id':entry_id,'exit_id':exit_id,
+                    'listen_port':None if options.get('reset_ports') else rule.get('listen_port'),
+                    'tunnel_port':None if options.get('reset_ports') else rule.get('tunnel_port')})
+                rid = self._save_rule(data)
+                ids.append(rid)
+                portable.append(self.portable_rule(dict(self.db.execute('SELECT * FROM rules WHERE id=?',(rid,)).fetchone())))
+            except (ValueError,KeyError,TypeError) as exc:
+                raise ValueError('第 ' + str(index) + ' 条规则：' + str(exc)) from exc
+        return ids, {'format':'gost-panel-rules','version':1,'rules':portable}
+
+    def import_rules(self, document, options=None, preview=False):
+        with self.lock, self.db:
+            if preview:
+                self.db.execute('SAVEPOINT import_preview')
+                try:
+                    _, normalized = self._import_rules(document, {} if options is None else options)
+                finally:
+                    self.db.execute('ROLLBACK TO import_preview')
+                    self.db.execute('RELEASE import_preview')
+                return {'count':len(normalized['rules']), 'document':normalized}
+            ids, _ = self._import_rules(document, {} if options is None else options)
+            self.audit('批量导入规则：' + str(len(ids)) + ' 条')
+            return {'ids':ids,'imported':len(ids)}
 
     def reserved_ports(self, group_id, side, protocol, excluded=None):
         scope = {g['id'] for g in self.group_path(group_id)}
