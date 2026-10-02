@@ -26,7 +26,7 @@ jobs:
           GOST_BINARY: /tmp/gost-test/gost
         run: |
           bash -n scripts/install-panel.sh
-          python -m py_compile app.py core.py agent.py installers.py cache.py
+          python -m py_compile app.py core.py agent.py installers.py cache.py diagnostics.py upgrade.py upgrade_control.py
           node --check static/app.js
           python -m unittest discover -s tests -v
   deployment:
@@ -41,4 +41,4 @@ jobs:
           sudo env SMOKE_PASSWORD="$SMOKE_PASSWORD" python3 tests/deployment_smoke.py
       - name: Report service logs on failure
         if: failure()
-        run: sudo journalctl -u gost-panel -u gost-agent --no-pager -n 100
+        run: sudo journalctl -u gost-panel -u gost-agent -u gost-panel-upgrade --no-pager -n 100

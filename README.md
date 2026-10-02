@@ -57,9 +57,9 @@ unset GOST_ADMIN_PASSWORD
 6. 「高级选项」可选择 TCP / UDP、自定义出口隧道端口、设置保存后启用或停用。出口隧道端口留空时从 `20000–59999` 分配，每条规则独占一个出口 TCP 端口。
 7. 在两端配置同步后，通过 `入口机IP:监听端口` 接入。在线表示最近 40 秒收到心跳；**已生效表示两端 GOST 进程运行且配置版本匹配，不代表目标网络已探测可达**。
 
-节点从面板 HTTPS 下载已缓存的 GOST 安装包，**无需国内节点直接访问 GitHub**。面板安装 / 更新时会预缓存 amd64 和 arm64 官方包，后续安装复用缓存；面板与节点两端均按固定 SHA256 校验，下载接口需要未过期的安装凭证。首次预缓存未成功时，面板会在节点请求时重试。
+节点从面板 HTTPS 下载已缓存的 GOST 安装包，**无需国内节点直接访问 GitHub**。面板安装 / 更新时会预缓存 amd64 和 arm64 官方包，后续安装复用缓存；面板与节点两端均按固定 SHA256 校验，下载接口需要有效的安装凭证。首次预缓存未成功时，面板会在节点请求时重试。
 
-代理约每 10 秒同步配置。首次节点上线也可能需要十几秒。安装凭证有效期 1 小时，注册后立即失效；重新生成会撤销该节点此前未使用的凭证。重装节点会替换长期凭证。
+代理约每 10 秒同步配置。首次节点上线也可能需要十几秒。安装命令不限时间，可重复使用；重新生成命令会撤销该节点旧的安装凭证，删除节点也会撤销。命令内含永久安装凭证，请妥善保管。重装节点会替换代理长期凭证；已有面板升级后，数据库中仍保留的旧安装凭证也变为不限时。
 
 ### 防火墙与端口
 
@@ -112,6 +112,10 @@ sudo systemctl start gost-panel
 
 ### 升级 / 回退
 
+新版安装后，在「系统设置」点击「一键升级面板」即可升级到 GitHub `main` 最新提交。界面显示进度和结果，重启后自动恢复连接。专用 systemd 升级服务执行固定仓库、固定路径的更新；普通面板服务仍以非 root 身份运行。升级自动备份 SQLite 数据库到 `/var/lib/gost-panel-upgrade/panel-before-upgrade.db`（root 可读），保留证书、密码、节点和规则；新版本未通过本地 HTTPS 健康检查时尝试恢复旧代码和数据库。服务日志：`sudo journalctl -u gost-panel-upgrade -n 100 --no-pager`。
+
+**旧部署需要先重新执行一次新版面板安装脚本**，安装升级服务后才可使用按钮。一键升级仅更新面板，节点代理如需更新仍需重新安装；面板重启期间已运行的转发继续使用节点缓存配置。
+
 重新执行面板安装脚本会更新代码，保留数据和证书，上一版代码保存到 `/opt/gost-panel.previous`。升级前请备份数据。也可通过 `GOST_PANEL_REF` 指定 GitHub tag / commit：
 
 ```bash
@@ -140,7 +144,13 @@ sudo -u gost-panel python3 /opt/gost-panel/cache.py --directory /var/lib/gost-pa
 
 ### 卸载
 
-面板：`sudo systemctl disable --now gost-panel`，再删除 `/etc/systemd/system/gost-panel.service`、`/opt/gost-panel`、`/etc/gost-panel.env`，执行 `sudo systemctl daemon-reload`。节点对应停止 `gost-agent`，删除服务文件、`/opt/gost-agent` 与 `/usr/local/bin/gost`。请确认 GOST 二进制未被其他服务使用。数据目录和系统用户可在确认备份后手动移除。
+面板：`sudo systemctl disable --now gost-panel-upgrade.path gost-panel`，再删除 `/etc/systemd/system/gost-panel-upgrade.path`、`/etc/systemd/system/gost-panel-upgrade.service`、`/etc/systemd/system/gost-panel.service`、`/opt/gost-panel`、`/etc/gost-panel.env`，执行 `sudo systemctl daemon-reload`。节点对应停止 `gost-agent`，删除服务文件、`/opt/gost-agent` 与 `/usr/local/bin/gost`。请确认 GOST 二进制未被其他服务使用。数据目录和系统用户可在确认备份后手动移除。
+
+### 线路不通与 DNS
+
+「配置已应用」仅表示两端代理已加载规则，不代表业务连通。规则行的「诊断」由面板服务器检查入口地址解析和 TCP 监听、出口 TLS 证书及 Relay 认证；TCP 规则还验证出口是否能连接本次选中的落地目标。诊断不会发送业务协议数据，也不能替代入口机器到出口的实际路由或 UDP 应用响应测试。出口仅放行入口 IP 时，面板发起的诊断可能被防火墙拒绝。
+
+日志出现 `lookup ... no such host` 表示域名无法解析。在「节点管理」编辑对应节点，改为正确的公网 IP，或给域名添加 A/AAAA 记录。保存节点地址后代理约 10 秒同步，无需重装；出口证书校验仍使用节点独立名称，不依赖公网地址。客户端应连接入口公网地址与入口监听端口；出口需要放行该规则的 **TCP 隧道端口**，其值在规则列表可见。随后查看入口与出口日志：`sudo journalctl -u gost-agent -n 60 --no-pager`。
 
 ## 开发与测试
 

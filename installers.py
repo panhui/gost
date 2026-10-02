@@ -1,4 +1,4 @@
-"""Generate a self-contained, expiring Linux enrollment script."""
+"""Generate a self-contained Linux enrollment script with a revocable permanent credential."""
 import base64
 import gzip
 import shlex

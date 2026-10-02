@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agent import Agent, atomic_json
 from core import certificate, digest
+from diagnostics import diagnose, check_exit
 import test_panel
 
 BINARY = os.getenv('GOST_BINARY')
@@ -66,6 +67,7 @@ class GOSTIntegration(test_panel.APITests):
     # Reuse only the TLS fixture, not its test methods.
     test_authentication_csrf_and_node_isolation = None
     test_rate_limit_and_security_headers = None
+    test_upgrade_requires_login_csrf_and_enabled_helper = None
     test_authenticated_cached_asset_download_and_expired_credentials = None
 
     def setUp(self):
@@ -148,7 +150,7 @@ class GOSTIntegration(test_panel.APITests):
         exit_node=self.store.save_node({'name':'exit','role':'exit','host':'127.0.0.1'})
         echo=Echo();self.echoes.append(echo)
         listen,tunnel=free_port(),free_port()
-        self.store.save_rule({'name':'test','entry_id':entry,'exit_id':exit_node,'listen_port':listen,
+        rid = self.store.save_rule({'name':'test','entry_id':entry,'exit_id':exit_node,'listen_port':listen,
                              'tunnel_port':tunnel,'target_host':'127.0.0.1','target_port':echo.port})
         agents=[]
         try:
@@ -157,6 +159,24 @@ class GOSTIntegration(test_panel.APITests):
                 atomic_json(folder/'agent.json',{})
                 agent=Agent(folder,BINARY);agent.apply(self.store.config(nid));agents.append(agent)
             self.assertEqual(tcp_roundtrip(listen),b'hello through TLS')
+            result = diagnose(self.store, rid)
+            self.assertTrue(all(c['ok'] for c in result['checks']), result)
+            # A nonexistent exit domain breaks forwarding despite applied config.
+            self.store.save_node({'name':'exit','role':'exit','host':'missing.gost.invalid'},exit_node)
+            agents[1].apply(self.store.config(entry))
+            try: self.assertNotEqual(tcp_roundtrip(listen),b'hello through TLS')
+            except OSError: pass
+            result = diagnose(self.store, rid)
+            self.assertFalse(result['checks'][1]['ok'])
+            self.assertIn('DNS',result['checks'][1]['message'])
+            # Editing the address to a working IP repairs it with the same cert.
+            self.store.save_node({'name':'exit','role':'exit','host':'127.0.0.1'},exit_node)
+            agents[1].apply(self.store.config(entry))
+            self.assertEqual(tcp_roundtrip(listen),b'hello through TLS')
+            row = dict(self.store.db.execute('SELECT * FROM rules WHERE id=?',(rid,)).fetchone())
+            failure = check_exit(self.store.node(exit_node),{**row,'secret':'incorrect'})
+            self.assertFalse(failure['ok'])
+            self.assertIn('认证失败',failure['message'])
             good=copy.deepcopy(self.store.config(entry))
             def revision(payload):
                 payload['revision']=digest(json.dumps({k:v for k,v in payload.items() if k!='revision'},sort_keys=True))

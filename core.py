@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 
+PANEL_VERSION = '0.2.0'
 GOST_VERSION = '3.3.0'
 CHECKSUMS = {
     'amd64': '676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5',
@@ -136,6 +137,8 @@ class Store:
             if not initial_password or len(initial_password) < 12:
                 raise ValueError('首次启动需要设置至少 12 位的 GOST_ADMIN_PASSWORD')
             self.db.execute("INSERT INTO settings VALUES ('password', ?)", (password_hash(initial_password),))
+        # Existing installation commands become permanent too.
+        self.db.execute('UPDATE installs SET expires=0')
         self.db.commit()
 
     def audit(self, message):
@@ -291,21 +294,21 @@ class Store:
             for rule in rules:
                 rule['targets'] = [address(t['host'], t['port']) for t in (json.loads(rule.pop('targets_json')) or [{'host': rule['target_host'], 'port': rule['target_port']}])]
             audit = [dict(r) for r in self.db.execute('SELECT time,message FROM audit ORDER BY id DESC LIMIT 30')]
-            return {'nodes': nodes, 'rules': rules, 'audit': audit, 'gost_version': GOST_VERSION}
+            return {'nodes': nodes, 'rules': rules, 'audit': audit, 'gost_version': GOST_VERSION, 'panel_version': PANEL_VERSION}
 
     def installation(self, node_id):
         with self.lock, self.db:
             self.node(node_id)
             token = secrets.token_urlsafe(32)
-            self.db.execute('DELETE FROM installs WHERE node_id=? OR expires<?', (node_id, time.time()))
-            self.db.execute('INSERT INTO installs VALUES (?,?,?)', (digest(token), node_id, time.time() + 3600))
+            self.db.execute('DELETE FROM installs WHERE node_id=?', (node_id,))
+            self.db.execute('INSERT INTO installs VALUES (?,?,?)', (digest(token), node_id, 0))
             self.audit('生成节点安装脚本：' + self.node(node_id)['name'])
             return token
 
     def bootstrap_node(self, token):
-        row = self.db.execute('SELECT node_id FROM installs WHERE token_hash=? AND expires>?', (digest(token), time.time())).fetchone()
+        row = self.db.execute('SELECT node_id FROM installs WHERE token_hash=?', (digest(token),)).fetchone()
         if not row:
-            raise ValueError('安装凭证已过期或已使用，请在面板重新生成')
+            raise ValueError('安装凭证已被撤销或节点已删除，请在面板重新生成')
         return row[0]
 
     def enroll(self, token):
@@ -314,7 +317,6 @@ class Store:
             credential = secrets.token_urlsafe(48)
             self.db.execute('UPDATE nodes SET token_hash=?,last_seen=0,applied=?,running=0,error=? WHERE id=?',
                             (digest(credential), '', '', node_id))
-            self.db.execute('DELETE FROM installs WHERE node_id=?', (node_id,))
             self.audit('节点完成注册：' + self.node(node_id)['name'])
             return {'node_id': node_id, 'token': credential}
 

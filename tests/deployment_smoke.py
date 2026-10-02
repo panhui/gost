@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 
@@ -50,7 +51,30 @@ def main():
         actual_user = subprocess.check_output(['systemctl', 'show', '-p', 'User', '--value', service], text=True).strip()
         if actual_user != expected_user:
             raise RuntimeError('Service does not use its unprivileged user')
-    print('Real panel and node installers passed; systemd agent is online and synced.')
+    # Exercise the real privileged one-click updater and data preservation.
+    before_cert = Path('/var/lib/gost-panel/panel-cert.pem').read_bytes()
+    result, _ = call('/api/upgrade', {})
+    if result['state'] != 'queued':
+        raise RuntimeError('Upgrade was not queued')
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        try:
+            result, _ = call('/api/upgrade')
+            if result['state'] == 'failed':
+                raise RuntimeError(result['message'])
+            if result['state'] == 'success':
+                break
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(2)
+    else:
+        raise RuntimeError('One-click upgrade did not complete')
+    state, _ = call('/api/state')
+    if state['nodes'][0]['id'] != node['id'] or Path('/var/lib/gost-panel/panel-cert.pem').read_bytes() != before_cert:
+        raise RuntimeError('Upgrade did not preserve node or certificate')
+    if not Path('/var/lib/gost-panel-upgrade/panel-before-upgrade.db').is_file():
+        raise RuntimeError('Upgrade did not back up the database')
+    print('Real panel/node installers and one-click upgrade passed; data and certificate preserved.')
 
 
 if __name__ == '__main__':

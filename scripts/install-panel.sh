@@ -4,6 +4,12 @@ set -euo pipefail
 umask 077
 [[ $EUID -eq 0 ]] || { echo '请使用 sudo bash 运行安装脚本' >&2; exit 1; }
 command -v systemctl >/dev/null || { echo '需要 systemd Linux 系统' >&2; exit 1; }
+# Existing deployments reuse their public URL, TLS paths and bind settings.
+if [[ -z ${GOST_PUBLIC_URL:-} && -f /etc/gost-panel.env ]]; then
+  set -a
+  source /etc/gost-panel.env
+  set +a
+fi
 if command -v apt-get >/dev/null; then
   apt-get update
   echo '等待其他 apt/dpkg 任务完成（最多 10 分钟）…'
@@ -47,7 +53,7 @@ curl --fail --show-error --location --proto '=https' --tlsv1.2 --retry 3 \
   "https://api.github.com/repos/panhui/gost/tarball/$ref" -o "$scratch/panel.tar.gz"
 mkdir "$scratch/source"
 tar -xzf "$scratch/panel.tar.gz" -C "$scratch/source" --strip-components=1
-python3 -m py_compile "$scratch/source/app.py" "$scratch/source/core.py" "$scratch/source/agent.py" "$scratch/source/installers.py" "$scratch/source/cache.py"
+python3 -m py_compile "$scratch/source/"*.py
 if ! python3 - <<'CHECK_INITIALIZED'
 import sqlite3
 try:
@@ -98,7 +104,11 @@ if not valid:
     print('已生成面板 HTTPS 证书；如之前安装过节点，请重新安装以更新证书信任。')
 def quote(value):
     return '"' + value.replace('\\','\\\\').replace('"','\\"') + '"'
-Path('/etc/gost-panel.env').write_text('GOST_PUBLIC_URL='+quote(url)+'\nGOST_PORT='+str(parsed.port or 443)+'\nGOST_DATA=/var/lib/gost-panel\n')
+config = 'GOST_PUBLIC_URL='+quote(url)+'\nGOST_PORT='+str(parsed.port or 443)+'\nGOST_DATA=/var/lib/gost-panel\nGOST_UPGRADE_ENABLED=1\n'
+for option in ('GOST_TLS_CERT', 'GOST_TLS_KEY', 'GOST_BIND'):
+    if os.environ.get(option):
+        config += option + '=' + quote(os.environ[option]) + '\n'
+Path('/etc/gost-panel.env').write_text(config)
 os.chmod('/etc/gost-panel.env',0o600)
 os.chmod(key,0o600)
 CONFIGURE
@@ -137,7 +147,35 @@ UMask=0077
 [Install]
 WantedBy=multi-user.target
 SERVICE
+install -d -m 755 -o root -g root /var/lib/gost-panel-upgrade
+cat > /etc/systemd/system/gost-panel-upgrade.service <<'UPGRADE_SERVICE'
+[Unit]
+Description=Upgrade GOST panel from its official GitHub repository
+After=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -B /opt/gost-panel/upgrade.py
+ExecStopPost=/usr/bin/python3 -B /opt/gost-panel/upgrade.py --finalize
+TimeoutStartSec=600
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt /var/lib/gost-panel /var/lib/gost-panel-upgrade
+PrivateTmp=true
+UMask=0022
+UPGRADE_SERVICE
+cat > /etc/systemd/system/gost-panel-upgrade.path <<'UPGRADE_PATH'
+[Unit]
+Description=Watch for authenticated GOST panel upgrade requests
+[Path]
+PathExists=/var/lib/gost-panel/upgrade-request.json
+Unit=gost-panel-upgrade.service
+[Install]
+WantedBy=multi-user.target
+UPGRADE_PATH
 systemctl daemon-reload
+systemctl enable --now gost-panel-upgrade.path
 systemctl enable --now gost-panel.service
 sleep 2
 systemctl is-active --quiet gost-panel.service

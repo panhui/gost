@@ -15,6 +15,8 @@ from pathlib import Path
 from cache import AssetCache, DownloadError
 from core import Store, digest, password_hash, verify_password
 from installers import install_command, install_script
+from diagnostics import diagnose
+from upgrade_control import UpgradeControl
 
 ROOT = Path(__file__).resolve().parent
 
@@ -28,6 +30,7 @@ class PanelServer(ThreadingHTTPServer):
         self.store, self.public_url = store, public_url
         self.certificate, self.secure = certificate, secure
         self.assets = AssetCache(store.directory / 'downloads')
+        self.upgrades = UpgradeControl(store.directory, os.getenv('GOST_UPGRADE_ENABLED') == '1')
         self.login_attempts, self.login_lock = {}, threading.Lock()
         self.slots = threading.BoundedSemaphore(64)
 
@@ -57,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = 'GOSTPanel'
 
     def log_message(self, *_):
-        # Enrollment URLs contain one-time secrets. Never put request paths in logs.
+        # Installation URLs contain permanent secrets. Never put request paths in logs.
         pass
 
     def respond(self, status, value, content_type='application/json; charset=utf-8', extra=None):
@@ -185,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
                 with store.lock:
                     store.bootstrap_node(auth[7:])
             except ValueError:
-                return self.respond(401, {'error': '安装凭证已过期或已使用，请重新生成脚本'})
+                return self.respond(401, {'error': '安装凭证已被撤销，请重新生成脚本'})
             arch = path[len('/downloads/gost/'):]
             return self.send_asset(self.server.assets.get(arch))
         if path.startswith('/install/') and method == 'GET':
@@ -215,7 +218,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/session' and method == 'GET':
             return self.respond(200, {'csrf': session['csrf'], 'public_url': self.server.public_url})
         if path == '/api/state' and method == 'GET':
-            return self.respond(200, store.snapshot())
+            return self.respond(200, {**store.snapshot(), 'upgrade': self.server.upgrades.status()})
+        if path == '/api/upgrade' and method == 'GET':
+            return self.respond(200, self.server.upgrades.status())
+        if path == '/api/upgrade' and method == 'POST':
+            result = self.server.upgrades.start()
+            with store.lock, store.db:
+                store.audit('请求一键升级面板')
+            return self.respond(202, result)
         if path == '/api/logout' and method == 'POST':
             with store.lock, store.db:
                 store.db.execute('DELETE FROM sessions WHERE token_hash=?', (session['token_hash'],))
@@ -248,8 +258,11 @@ class Handler(BaseHTTPRequestHandler):
                 token = store.installation(parts[2])
                 return self.respond(200, {'command': install_command(self.server.public_url, self.server.certificate, token),
                                          'script': install_script(self.server.public_url, self.server.certificate, token),
-                                         'expires_in': 3600})
+                                         'expires_in': None})
         if len(parts) >= 2 and parts[:2] == ['api', 'rules']:
+            if len(parts) == 4 and parts[3] == 'diagnose' and method == 'POST':
+                self.connection.settimeout(40)
+                return self.respond(200, diagnose(store, parts[2]))
             if len(parts) == 2 and method == 'POST':
                 return self.respond(201, {'id': store.save_rule(self.body())})
             if len(parts) == 3 and method == 'PUT':

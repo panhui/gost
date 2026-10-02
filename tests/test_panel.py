@@ -64,26 +64,27 @@ class PanelTests(unittest.TestCase):
         self.assertNotEqual(rule['listen_port'],18080)
         self.assertNotEqual(rule['tunnel_port'],18443)
 
-    def test_one_time_enrollment_rotation_and_persistence(self):
+    def test_permanent_enrollment_rotation_and_persistence(self):
         token = self.store.installation(self.entry)
         second = self.store.installation(self.entry)
         with self.assertRaises(ValueError):
             self.store.enroll(token)
         identity = self.store.enroll(second)
         self.assertEqual(self.store.authenticate_node(identity['token']),self.entry)
-        with self.assertRaises(ValueError):
-            self.store.enroll(second)
-        replacement = self.store.enroll(self.store.installation(self.entry))
+        # Reuse the same command after arbitrary time and after registration.
+        with self.store.db:
+            self.store.db.execute('UPDATE installs SET expires=1')
+        replacement = self.store.enroll(second)
         self.assertIsNone(self.store.authenticate_node(identity['token']))
         self.assertEqual(self.store.authenticate_node(replacement['token']),self.entry)
         expired = self.store.installation(self.exit)
         with self.store.db:
             self.store.db.execute('UPDATE installs SET expires=0 WHERE token_hash=?',(digest(expired),))
-        with self.assertRaises(ValueError):
-            self.store.enroll(expired)
+        self.assertEqual(self.store.enroll(expired)['node_id'], self.exit)
         self.store.db.close()
         self.store = Store(self.temp.name)
         self.assertEqual(len(self.store.snapshot()['nodes']),2)
+        self.assertEqual(self.store.bootstrap_node(second), self.entry)
         self.store.delete_node(self.entry)
         self.assertIsNone(self.store.authenticate_node(replacement['token']))
 
@@ -158,7 +159,8 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.call('/install/'+token)[0],200)
         status,identity,_=self.call('/agent/enroll','POST',{'token':token})
         self.assertEqual(status,200)
-        self.assertEqual(self.call('/install/'+token)[0],400)
+        self.assertEqual(self.call('/install/'+token)[0],200)
+        self.assertIsNone(install['expires_in'])
         self.assertEqual(self.call('/agent/config')[0],401)
         self.assertEqual(self.call('/agent/config',token=identity['token'])[0],200)
         status,payload,_=self.call('/agent/config',token=identity['token'])
@@ -189,7 +191,23 @@ class APITests(unittest.TestCase):
             self.assertEqual(headers['Content-Length'],str(len(data)))
             self.assertEqual(self.call('/downloads/gost/not-supported',token=token)[0],400)
         self.store.enroll(token)
+        with mock.patch.dict(CHECKSUMS, {'amd64':checksum}):
+            self.assertEqual(self.call('/downloads/gost/amd64',token=token)[0],200)
+        self.store.installation(nid)
         self.assertEqual(self.call('/downloads/gost/amd64',token=token)[0],401)
+
+    def test_upgrade_requires_login_csrf_and_enabled_helper(self):
+        from upgrade_control import UpgradeControl
+        self.assertEqual(self.call('/api/upgrade','POST',{})[0],401)
+        self.login()
+        self.assertEqual(self.call('/api/upgrade','POST',{},csrf=False)[0],403)
+        self.assertEqual(self.call('/api/upgrade','POST',{})[0],400)
+        self.server.upgrades = UpgradeControl(self.store.directory, True, self.store.directory / 'upgrade-status')
+        self.assertEqual(self.call('/api/upgrade','POST',{})[0],202)
+        self.assertEqual(self.call('/api/upgrade')[1]['state'],'queued')
+        self.assertEqual(self.call('/api/upgrade','POST',{})[0],400)
+        self.assertEqual(self.call('/api/rules/missing/diagnose','POST',{},csrf=False)[0],403)
+        self.assertEqual(self.call('/api/rules/missing/diagnose','POST',{})[0],400)
 
     def test_rate_limit_and_security_headers(self):
         status,_,headers=self.call('/')
