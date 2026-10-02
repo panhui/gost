@@ -1,4 +1,5 @@
 """Explicit, authenticated checks from the panel's network location."""
+import json
 import socket
 import ssl
 import struct
@@ -70,6 +71,21 @@ def check_exit(exit_node, rule):
         return {'label': stage, 'address': endpoint, 'ok': False, 'message': failure(exc)}
 
 
+def check_target(target, rule):
+    endpoint = address(target['host'], target['port'])
+    try:
+        socket.getaddrinfo(target['host'], target['port'], type=socket.SOCK_STREAM)
+        if rule['protocol'] == 'udp':
+            message = '面板 DNS 解析正常；入口到目标的 UDP 响应需使用实际客户端验证'
+        else:
+            with socket.create_connection((target['host'], target['port']), timeout=5):
+                pass
+            message = '面板可连接目标 TCP 端口；入口到目标仍需从客户端验证'
+        return {'label': '直连目标', 'address': endpoint, 'ok': True, 'message': message}
+    except OSError as exc:
+        return {'label': '直连目标', 'address': endpoint, 'ok': False, 'message': failure(exc)}
+
+
 def diagnose(store, rule_id):
     with store.lock:
         row = store.db.execute('SELECT * FROM rules WHERE id=?', (rule_id,)).fetchone()
@@ -80,14 +96,20 @@ def diagnose(store, rule_id):
             raise ValueError('请先启用规则并等待节点同步')
         entries = [n for g in store.group_path(rule['entry_id']) for n in store.members(g['id']) if n['enabled']][:8]
         exits = [n for g in store.group_path(rule['exit_id']) for n in store.members(g['id']) if n['enabled']][:8]
+        direct = rule['exit_id'] is None
+        targets = (json.loads(rule['targets_json']) or [{'host': rule['target_host'], 'port': rule['target_port']}])[:8]
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = []
         for checker, members in ((check_entry, entries), (check_exit, exits)):
             for member in members:
                 futures.append((member['name'], pool.submit(checker, member, rule)))
-        checks = [{**future.result(), 'label': title + ' · ' + future.result()['label']} for title, future in futures]
+        if direct:
+            for target in targets:
+                futures.append(('', pool.submit(check_target, target, rule)))
+        checks = [{**future.result(), 'label': (title + ' · ' if title else '') + future.result()['label']} for title, future in futures]
     if not entries:
         checks.insert(0, {'label': '入口设备组', 'address': '', 'ok': False, 'message': '没有启用的入口设备，请先执行组安装命令'})
-    if not exits:
+    if not exits and not direct:
         checks.append({'label': '出口设备组', 'address': '', 'ok': False, 'message': '没有启用的出口设备，请先执行组安装命令'})
-    return {'checks': checks, 'scope': '检测由面板服务器发起，每侧最多检查 8 台启用的设备，包含备用组。入口到出口的实际路由、客户端网络和业务协议仍需从客户端验证；多个落地目标仅检测出口本次选中的一个。'}
+    scope = '检测由面板服务器发起，最多检查 8 台入口和 8 个目标。未验证入口到目标的实际路由及业务协议，请从客户端测试。' if direct else '检测由面板服务器发起，每侧最多检查 8 台启用的设备，包含备用组。入口到出口的实际路由、客户端网络和业务协议仍需从客户端验证；多个落地目标仅检测出口本次选中的一个。'
+    return {'checks': checks, 'scope': scope}

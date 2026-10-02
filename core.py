@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-PANEL_VERSION = '0.3.0'
+PANEL_VERSION = '0.4.0'
 GOST_VERSION = '3.3.0'
 CHECKSUMS = {
     'amd64': '676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5',
@@ -134,6 +134,7 @@ class Store:
         if 'targets_json' not in columns:
             self.db.execute("ALTER TABLE rules ADD COLUMN targets_json TEXT NOT NULL DEFAULT '[]'")
         self.migrate_groups()
+        self.migrate_direct_rules()
         if not self.db.execute("SELECT value FROM settings WHERE key='password'").fetchone():
             if not initial_password or len(initial_password) < 12:
                 raise ValueError('首次启动需要设置至少 12 位的 GOST_ADMIN_PASSWORD')
@@ -180,6 +181,26 @@ class Store:
                 self.db.execute('DROP TABLE rules')
                 self.db.execute('ALTER TABLE rules_grouped RENAME TO rules')
                 self.db.execute("INSERT INTO settings VALUES ('groups_schema','1')")
+
+    def migrate_direct_rules(self):
+        if self.db.execute("SELECT 1 FROM settings WHERE key='direct_schema'").fetchone():
+            return
+        # NULL exit and tunnel port explicitly mean entry-to-target forwarding.
+        # Existing tunnel rules retain all IDs, ports and credentials.
+        with self.db:
+            self.db.execute('''CREATE TABLE rules_direct (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, protocol TEXT NOT NULL,
+                entry_id TEXT NOT NULL REFERENCES groups(id), exit_id TEXT REFERENCES groups(id),
+                listen_port INTEGER NOT NULL, tunnel_port INTEGER,
+                target_host TEXT NOT NULL, target_port INTEGER NOT NULL,
+                enabled INTEGER NOT NULL, secret TEXT NOT NULL, targets_json TEXT NOT NULL DEFAULT '[]',
+                CHECK ((exit_id IS NULL AND tunnel_port IS NULL) OR
+                       (exit_id IS NOT NULL AND tunnel_port IS NOT NULL)),
+                UNIQUE(entry_id,protocol,listen_port), UNIQUE(exit_id,tunnel_port))''')
+            self.db.execute('INSERT INTO rules_direct SELECT * FROM rules')
+            self.db.execute('DROP TABLE rules')
+            self.db.execute('ALTER TABLE rules_direct RENAME TO rules')
+            self.db.execute("INSERT INTO settings VALUES ('direct_schema','1')")
 
     def group(self, group_id):
         row = self.db.execute('SELECT * FROM groups WHERE id=?', (group_id,)).fetchone()
@@ -334,9 +355,13 @@ class Store:
                 if not row:
                     raise ValueError('规则不存在')
                 old = dict(row)
-            entry, exit_node = self.group(data.get('entry_id')), self.group(data.get('exit_id'))
-            if entry['role'] != 'entry' or exit_node['role'] != 'exit':
-                raise ValueError('必须选择一个入口设备组和一个出口设备组')
+            mode = data.get('mode', 'direct' if 'exit_id' in data and data['exit_id'] is None else 'tunnel')
+            if mode not in ('direct', 'tunnel'):
+                raise ValueError('转发模式必须为 direct 或 tunnel')
+            entry = self.group(data.get('entry_id'))
+            exit_node = None if mode == 'direct' else self.group(data.get('exit_id'))
+            if entry['role'] != 'entry' or (exit_node and exit_node['role'] != 'exit'):
+                raise ValueError('请选择入口设备组和出口设备组')
             protocol = data.get('protocol', 'tcp')
             if protocol not in ('tcp', 'udp'):
                 raise ValueError('仅支持 TCP 或 UDP')
@@ -348,18 +373,18 @@ class Store:
                     raise ValueError('入口没有可用的自动分配端口')
                 listen = secrets.choice(available)
             listen = port(listen)
-            tunnel = data.get('tunnel_port')
-            if not tunnel:
+            tunnel = data.get('tunnel_port') if exit_node else None
+            if exit_node and not tunnel:
                 used = self.reserved_ports(exit_node['id'], 'exit', 'tcp', rule_id)
                 tunnel = next((p for p in range(20000, 60000) if p not in used), None)
                 if tunnel is None:
                     raise ValueError('出口没有可用的自动分配端口')
-            tunnel = port(tunnel)
+            tunnel = port(tunnel) if exit_node else None
             target_list = targets(data['targets']) if 'targets' in data else [{'host': host(data.get('target_host', '')), 'port': port(data.get('target_port'))}]
             title, target, target_port = name(data.get('name', '')), target_list[0]['host'], target_list[0]['port']
             if type(data.get('enabled', True)) is not bool:
                 raise ValueError('enabled 必须为布尔值')
-            values = (title, protocol, entry['id'], exit_node['id'], listen, tunnel, target,
+            values = (title, protocol, entry['id'], exit_node['id'] if exit_node else None, listen, tunnel, target,
                       target_port, int(data.get('enabled', True)), old['secret'] if old else secrets.token_urlsafe(32), json.dumps(target_list))
             try:
                 if old:
@@ -431,13 +456,21 @@ class Store:
             files = {}
             now = time.time()
             for rule in self.rules_for(node):
+                rule_name = 'rule-' + rule['id']
+                target_list = json.loads(rule['targets_json']) or [{'host': rule['target_host'], 'port': rule['target_port']}]
+                if rule['exit_id'] is None:
+                    config['services'].append({
+                        'name': rule_name, 'addr': ':' + str(rule['listen_port']),
+                        'handler': {'type': rule['protocol'], **({'metadata': {'readBufferSize': '65535'}} if rule['protocol'] == 'udp' else {})},
+                        'listener': {'type': rule['protocol'], **({'metadata': {'keepAlive': True, 'ttl': '60s', 'readBufferSize': '65535'}} if rule['protocol'] == 'udp' else {})},
+                        'forwarder': {'nodes': [{'name': 'target-' + str(i), 'addr': address(t['host'], t['port'])} for i, t in enumerate(target_list)],
+                                      'selector': {'strategy': 'round', 'maxFails': 1, 'failTimeout': '10s'}}})
+                    continue
                 pool = self.exit_pool(rule['exit_id'], now, desired_cache)
                 if not pool:
                     # Never generate an empty hop: GOST could interpret that as
                     # a direct route. No healthy exit means no entry listener.
                     continue
-                rule_name = 'rule-' + rule['id']
-                target_list = json.loads(rule['targets_json']) or [{'host': rule['target_host'], 'port': rule['target_port']}]
                 target = address(target_list[0]['host'], target_list[0]['port'])
                 hops = []
                 has_primary = any(not backup for _, backup in pool)
@@ -489,6 +522,7 @@ class Store:
                 group['eligible_count'] = sum(n['eligible'] for n in members)
             rules = [dict(r) for r in self.db.execute('SELECT id,name,protocol,entry_id,exit_id,listen_port,tunnel_port,target_host,target_port,enabled,targets_json FROM rules ORDER BY rowid DESC')]
             for rule in rules:
+                rule['mode'] = 'direct' if rule['exit_id'] is None else 'tunnel'
                 rule['targets'] = [address(t['host'], t['port']) for t in (json.loads(rule.pop('targets_json')) or [{'host': rule['target_host'], 'port': rule['target_port']}])]
                 pool = self.exit_pool(rule['exit_id'], now, desired_cache) if rule['enabled'] else []
                 primary = [n['id'] for n, backup in pool if not backup]
