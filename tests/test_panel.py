@@ -169,6 +169,28 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.call('/api/password','POST',{'old_password':'correct-horse-password','new_password':'new-correct-password'})[0],200)
         self.assertEqual(self.call('/api/state')[0],401)
 
+    def test_authenticated_cached_asset_download_and_expired_credentials(self):
+        import hashlib
+        from unittest import mock
+        from cache import CHECKSUMS
+        from core import GOST_VERSION
+        self.login()
+        nid = self.store.save_node({'name':'入口','role':'entry','host':'127.0.0.1'})
+        token = self.store.installation(nid)
+        data = b'cached GOST archive'
+        checksum = hashlib.sha256(data).hexdigest()
+        path = self.store.directory / 'downloads' / ('gost_' + GOST_VERSION + '_linux_amd64.tar.gz')
+        path.write_bytes(data)
+        with mock.patch.dict(CHECKSUMS, {'amd64':checksum}):
+            self.assertEqual(self.call('/downloads/gost/amd64')[0],401)
+            status, archive, headers = self.call('/downloads/gost/amd64',token=token)
+            self.assertEqual(status,200)
+            self.assertEqual(archive,data)
+            self.assertEqual(headers['Content-Length'],str(len(data)))
+            self.assertEqual(self.call('/downloads/gost/not-supported',token=token)[0],400)
+        self.store.enroll(token)
+        self.assertEqual(self.call('/downloads/gost/amd64',token=token)[0],401)
+
     def test_rate_limit_and_security_headers(self):
         status,_,headers=self.call('/')
         self.assertEqual(status,200)

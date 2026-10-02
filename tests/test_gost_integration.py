@@ -66,6 +66,7 @@ class GOSTIntegration(test_panel.APITests):
     # Reuse only the TLS fixture, not its test methods.
     test_authentication_csrf_and_node_isolation = None
     test_rate_limit_and_security_headers = None
+    test_authenticated_cached_asset_download_and_expired_credentials = None
 
     def setUp(self):
         super().setUp()

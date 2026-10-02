@@ -31,9 +31,12 @@ esac
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 asset="gost_{GOST_VERSION}_linux_${{arch}}.tar.gz"
-echo "下载 GOST {GOST_VERSION} ($arch)…"
-curl --fail --show-error --location --proto '=https' --tlsv1.2 --retry 3 \
-  "https://github.com/go-gost/gost/releases/download/v{GOST_VERSION}/$asset" -o "$scratch/$asset"
+printf '%s' {shlex.quote(ca)} | base64 -d > "$scratch/panel-ca.pem"
+echo "从面板下载 GOST {GOST_VERSION} ($arch)…"
+curl --fail --show-error --location --cacert "$scratch/panel-ca.pem" \
+  --header {shlex.quote('Authorization: Bearer ' + token)} \
+  --connect-timeout 15 --max-time 900 --retry 2 --retry-max-time 1800 --proto '=https' --tlsv1.2 \
+  {shlex.quote(panel_url + '/downloads/gost/')}"$arch" -o "$scratch/$asset"
 printf '%s  %s\\n' "$checksum" "$scratch/$asset" | sha256sum --check -
 tar -xzf "$scratch/$asset" -C "$scratch" gost
 id gost-agent >/dev/null 2>&1 || useradd --system --home-dir /var/lib/gost-agent --shell /usr/sbin/nologin gost-agent

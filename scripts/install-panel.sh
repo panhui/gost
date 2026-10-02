@@ -47,7 +47,7 @@ curl --fail --show-error --location --proto '=https' --tlsv1.2 --retry 3 \
   "https://api.github.com/repos/panhui/gost/tarball/$ref" -o "$scratch/panel.tar.gz"
 mkdir "$scratch/source"
 tar -xzf "$scratch/panel.tar.gz" -C "$scratch/source" --strip-components=1
-python3 -m py_compile "$scratch/source/app.py" "$scratch/source/core.py" "$scratch/source/agent.py" "$scratch/source/installers.py"
+python3 -m py_compile "$scratch/source/app.py" "$scratch/source/core.py" "$scratch/source/agent.py" "$scratch/source/installers.py" "$scratch/source/cache.py"
 if ! python3 - <<'CHECK_INITIALIZED'
 import sqlite3
 try:
@@ -102,6 +102,10 @@ Path('/etc/gost-panel.env').write_text('GOST_PUBLIC_URL='+quote(url)+'\nGOST_POR
 os.chmod('/etc/gost-panel.env',0o600)
 os.chmod(key,0o600)
 CONFIGURE
+# Cache releases here once, so domestic nodes only download from the panel.
+if ! python3 "$scratch/source/cache.py" --directory /var/lib/gost-panel/downloads; then
+  echo '安装包预缓存失败。面板仍将安装，节点首次下载时会重试；可查看 README 手动预缓存。' >&2
+fi
 systemctl stop gost-panel.service 2>/dev/null || true
 # Preserve the previous source for manual rollback.
 if [[ -d /opt/gost-panel ]]; then

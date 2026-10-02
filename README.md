@@ -57,6 +57,8 @@ unset GOST_ADMIN_PASSWORD
 6. 「高级选项」可选择 TCP / UDP、自定义出口隧道端口、设置保存后启用或停用。出口隧道端口留空时从 `20000–59999` 分配，每条规则独占一个出口 TCP 端口。
 7. 在两端配置同步后，通过 `入口机IP:监听端口` 接入。在线表示最近 40 秒收到心跳；**已生效表示两端 GOST 进程运行且配置版本匹配，不代表目标网络已探测可达**。
 
+节点从面板 HTTPS 下载已缓存的 GOST 安装包，**无需国内节点直接访问 GitHub**。面板安装 / 更新时会预缓存 amd64 和 arm64 官方包，后续安装复用缓存；面板与节点两端均按固定 SHA256 校验，下载接口需要未过期的安装凭证。首次预缓存未成功时，面板会在节点请求时重试。
+
 代理约每 10 秒同步配置。首次节点上线也可能需要十几秒。安装凭证有效期 1 小时，注册后立即失效；重新生成会撤销该节点此前未使用的凭证。重装节点会替换长期凭证。
 
 ### 防火墙与端口
@@ -67,7 +69,8 @@ unset GOST_ADMIN_PASSWORD
 | 入口 | 入站规则监听端口，按规则选择 TCP 或 UDP |
 | 出口 | 入站每条规则的 **TCP 隧道端口**，建议仅允许入口 IP |
 | 落地 | 允许出口访问目标 TCP / UDP 端口 |
-| 节点安装 | 出站 HTTPS 到 GitHub，下载 GOST 固定版本 |
+| 节点安装 | 出站 HTTPS 到面板，下载安装脚本与缓存安装包 |
+| 面板安装包缓存 | 面板出站 HTTPS 到 GitHub，首次下载各架构 GOST 固定版本 |
 
 安装脚本**不会修改防火墙**。自动分配端口仅检查面板中的规则，无法预知服务器上的其他服务；若端口被其他程序占用，会显示启动失败并尝试恢复旧配置。
 
@@ -117,6 +120,18 @@ sudo GOST_PUBLIC_URL=https://panel.example.com:8443 GOST_PANEL_REF=v0.1.0 bash i
 
 回退时停止面板，将 `/opt/gost-panel.previous` 恢复到 `/opt/gost-panel` 再启动。该版本仅有向后兼容的 SQLite 新字段迁移；未来版本请参考发行说明。节点代理升级需重新生成安装脚本并重装。
 
+### 国内节点安装下载缓慢
+
+新版节点脚本从面板缓存下载 GOST。旧面板需先重新执行面板安装脚本升级，然后重新生成节点脚本；旧的已下载脚本仍使用 GitHub 地址。面板升级保留数据库、密码和证书。
+
+缓存目录为 `/var/lib/gost-panel/downloads`。可在面板服务器手动预缓存：
+
+```bash
+sudo -u gost-panel python3 /opt/gost-panel/cache.py --directory /var/lib/gost-panel/downloads
+```
+
+如果面板服务器访问 GitHub 也慢，可在能快速访问 GitHub 的机器下载官方 `gost_3.3.0_linux_amd64.tar.gz` / `gost_3.3.0_linux_arm64.tar.gz`，上传到该缓存目录，再执行 `sudo chown -R gost-panel:gost-panel /var/lib/gost-panel/downloads`。面板只会提供与 `core.py` 固定 SHA256 匹配的包；错误包会触发重新下载，不能跳过校验。节点实际速度仍受面板到国内服务器之间的网络影响。
+
 ### 使用可信证书 / 反向代理
 
 可将可信证书及私钥放入数据目录，配置 `/etc/gost-panel.env` 中的 `GOST_TLS_CERT` / `GOST_TLS_KEY`，确保证书与面板 URL 的域名匹配。替换面板证书后，**重新生成脚本并安装节点**，更新节点固定信任证书。内置证书有效期 10 年；证书续期也需更新节点信任。
@@ -152,6 +167,7 @@ GitHub Actions 在 Python 3.9 / 3.12 与 Linux 上执行真实 TCP/UDP 转发测
 | `core.py` | SQLite 数据、校验、GOST 配置生成 |
 | `agent.py` | 注册、配置轮询、GOST 子进程与回退 |
 | `installers.py` | 自包含节点安装脚本与固定证书命令 |
+| `cache.py` | 官方 GOST 安装包缓存、校验与预下载 |
 | `scripts/install-panel.sh` | 面板安装 / 更新与 systemd 服务 |
 | `static/` | 中文管理界面 |
 | `tests/` | 单元、API 与真实 GOST 集成测试 |

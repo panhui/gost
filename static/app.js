@@ -96,7 +96,7 @@ function ruleForm(id) {
 async function showInstallation(id) {
   const data = await api(`/api/nodes/${id}/install`,{method:'POST',body:{}});
   installation = {...data,id};
-  modal('安装节点 · '+node(id).name,`<div class="modal-body"><p class="subtitle">在对应服务器终端执行以下命令，或下载安装脚本后执行 sudo bash install-node.sh。</p><div class="notice">凭证有效期 1 小时，注册后立即失效。生成新脚本会使此前未使用的脚本失效。重新安装会替换该节点的代理凭证。</div><label>一键安装命令<textarea class="install-command" readonly aria-label="一键安装命令">${esc(data.command)}</textarea></label><p class="subtitle">支持 Debian / Ubuntu / Rocky / AlmaLinux，amd64 与 arm64。安装完成后等待节点上线，再添加转发规则。</p></div>`,`<div class="modal-foot"><button class="secondary" data-action="download-install">下载脚本</button><button class="primary" data-action="copy-install">复制命令</button></div>`);
+  modal('安装节点 · '+node(id).name,`<div class="modal-body"><p class="subtitle">在对应服务器终端执行以下命令，或下载安装脚本后执行 sudo bash install-node.sh。</p><div class="notice">凭证有效期 1 小时，注册后立即失效。生成新脚本会使此前未使用的脚本失效。重新安装会替换该节点的代理凭证。</div><label>一键安装命令<textarea class="install-command" readonly aria-label="一键安装命令">${esc(data.command)}</textarea></label><p class="subtitle">GOST 安装包通过面板缓存下载，无需节点直接访问 GitHub。支持 Debian / Ubuntu / Rocky / AlmaLinux，amd64 与 arm64。安装完成后等待节点上线，再添加转发规则。</p></div>`,`<div class="modal-foot"><button class="secondary" data-action="download-install">下载脚本</button><button class="primary" data-action="copy-install">复制命令</button></div>`);
 }
 function confirmation(type,id) {
   const item = type==='nodes' ? node(id) : state.rules.find(r=>r.id===id);

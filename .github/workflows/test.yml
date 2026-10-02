@@ -26,7 +26,7 @@ jobs:
           GOST_BINARY: /tmp/gost-test/gost
         run: |
           bash -n scripts/install-panel.sh
-          python -m py_compile app.py core.py agent.py installers.py
+          python -m py_compile app.py core.py agent.py installers.py cache.py
           node --check static/app.js
           python -m unittest discover -s tests -v
   deployment:

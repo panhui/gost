@@ -12,6 +12,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from cache import AssetCache, DownloadError
 from core import Store, digest, password_hash, verify_password
 from installers import install_command, install_script
 
@@ -26,6 +27,7 @@ class PanelServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.store, self.public_url = store, public_url
         self.certificate, self.secure = certificate, secure
+        self.assets = AssetCache(store.directory / 'downloads')
         self.login_attempts, self.login_lock = {}, threading.Lock()
         self.slots = threading.BoundedSemaphore(64)
 
@@ -78,6 +80,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(value)
 
+    def send_asset(self, path):
+        # Stream a validated cache file, without buffering the archive in memory.
+        self.connection.settimeout(120)
+        with path.open('rb') as source:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/gzip')
+            self.send_header('Content-Length', str(os.fstat(source.fileno()).st_size))
+            self.send_header('Content-Disposition', 'attachment; filename="' + path.name + '"')
+            self.send_header('Cache-Control', 'private, no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            for chunk in iter(lambda: source.read(128 * 1024), b''):
+                self.wfile.write(chunk)
+
     def body(self):
         length = int(self.headers.get('Content-Length', '0'))
         if not 0 < length <= 65536:
@@ -123,6 +139,8 @@ class Handler(BaseHTTPRequestHandler):
     def handle_request(self):
         try:
             self.route()
+        except DownloadError as exc:
+            self.respond(503, {'error': str(exc)})
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.respond(400, {'error': str(exc) or '输入无效'})
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
@@ -159,6 +177,17 @@ class Handler(BaseHTTPRequestHandler):
                 store.db.execute('INSERT INTO sessions VALUES (?,?,?)', (digest(token), csrf, now + 43200))
                 store.audit('管理员登录')
             return self.respond(200, {'csrf': csrf}, extra={'Set-Cookie': self.cookie(token, 43200)})
+        if path.startswith('/downloads/gost/') and method == 'GET':
+            auth = self.headers.get('Authorization', '')
+            if not auth.startswith('Bearer '):
+                return self.respond(401, {'error': '需要有效的节点安装凭证'})
+            try:
+                with store.lock:
+                    store.bootstrap_node(auth[7:])
+            except ValueError:
+                return self.respond(401, {'error': '安装凭证已过期或已使用，请重新生成脚本'})
+            arch = path[len('/downloads/gost/'):]
+            return self.send_asset(self.server.assets.get(arch))
         if path.startswith('/install/') and method == 'GET':
             token = path[len('/install/'):]
             with store.lock:
