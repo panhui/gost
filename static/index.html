@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GOST · 隧道转发面板</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<section id="login" class="login-screen" hidden>
+  <div class="login-art"><div class="logo big">g<span>→</span></div><p class="eyebrow">GOST CONTROL PLANE</p><h1>连接每一段线路。</h1><p>从入口到出口，再到世界的另一端。<br>在一个面板中管理你的隧道转发。</p><div class="login-flow">国内入口 <span>── TLS ──→</span> 出口节点 <span>──→</span> 国外落地</div></div>
+  <form id="login-form" class="login-form"><div class="logo">g<span>→</span></div><h2>登录控制台</h2><p class="muted">使用安装时设置的管理员密码</p><label>管理员密码<input type="password" name="password" autocomplete="current-password" required placeholder="请输入密码"></label><p class="form-error" id="login-error" role="alert"></p><button class="primary" type="submit">进入面板 <span>→</span></button><small>会话有效期 12 小时 · HTTPS 安全连接</small></form>
+</section>
+<div id="shell" class="shell" hidden>
+  <aside><a class="brand" href="/"><div class="logo">g<span>→</span></div><div>GOST <small>隧道转发面板</small></div></a><div class="nav-label">工作空间</div><nav>
+    <button class="nav active" data-page="overview"><span>◈</span>概览</button>
+    <button class="nav" data-page="rules"><span>⇄</span>转发规则<i id="nav-rule-count">0</i></button>
+    <button class="nav" data-page="nodes"><span>▦</span>节点管理</button>
+    <button class="nav" data-page="audit"><span>◷</span>操作记录</button>
+    <button class="nav" data-page="settings"><span>⚙</span>系统设置</button>
+  </nav><div class="sidebar-bottom"><div class="engine"><b class="status-dot"></b><span>GOST <strong id="gost-version">3.3.0</strong></span><small>TLS 隧道</small></div><button class="account" data-action="logout"><span class="avatar">A</span><div>管理员<small>退出登录</small></div><span>↗</span></button></div></aside>
+  <div class="workspace"><header><div class="breadcrumb">工作空间 <span>/</span> <b id="breadcrumb">概览</b></div><div class="header-right"><span class="sync-dot"></span><span id="refresh-state">等待同步</span><button class="icon-button" data-action="refresh" title="刷新数据" aria-label="刷新数据">↻</button></div></header>
+    <main id="content"></main><footer><span>GOST PANEL</span><span>入口 → TLS 隧道 → 出口 → 落地</span></footer>
+  </div>
+</div>
+<dialog id="modal"><div id="modal-content"></div></dialog><div id="toast" role="status" hidden></div>
+</body></html>

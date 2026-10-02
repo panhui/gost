@@ -1,0 +1,44 @@
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Download verified GOST 3.3.0
+        run: |
+          mkdir -p /tmp/gost-test
+          curl -fsSL --retry 3 https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_amd64.tar.gz -o /tmp/gost-test/gost.tar.gz
+          echo '676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5  /tmp/gost-test/gost.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/gost-test/gost.tar.gz -C /tmp/gost-test gost
+      - name: Validate syntax and forwarding integration
+        env:
+          GOST_BINARY: /tmp/gost-test/gost
+        run: |
+          bash -n scripts/install-panel.sh
+          python -m py_compile app.py core.py agent.py installers.py
+          node --check static/app.js
+          python -m unittest discover -s tests -v
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install panel and enroll systemd node
+        env:
+          SMOKE_PASSWORD: temporary-ci-panel-password
+        run: |
+          sudo env GOST_PUBLIC_URL=https://127.0.0.1:18443 GOST_ADMIN_PASSWORD="$SMOKE_PASSWORD" GOST_PANEL_REF="$GITHUB_SHA" bash scripts/install-panel.sh
+          sudo env SMOKE_PASSWORD="$SMOKE_PASSWORD" python3 tests/deployment_smoke.py
+      - name: Report service logs on failure
+        if: failure()
+        run: sudo journalctl -u gost-panel -u gost-agent --no-pager -n 100
