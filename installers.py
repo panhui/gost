@@ -93,4 +93,4 @@ echo "节点代理已启动。请回面板确认节点在线和规则同步；�
 def install_command(panel_url, certificate, token):
     ca = base64.b64encode(certificate.encode()).decode()
     url = panel_url + '/install/' + token
-    return f'''(umask 077; t=$(mktemp -d); trap 'rm -rf "$t"' EXIT; printf '%s' {shlex.quote(ca)} | base64 -d > "$t/ca.pem"; curl --fail --show-error --cacert "$t/ca.pem" {shlex.quote(url)} -o "$t/install.sh" && sudo bash "$t/install.sh")'''
+    return f'''(umask 077; t=$(mktemp -d); trap 'rm -rf "$t"' EXIT; printf '%s' {shlex.quote(ca)} | base64 -d > "$t/ca.pem"; curl --fail --show-error --cacert "$t/ca.pem" {shlex.quote(url)} -o "$t/install.sh" && sudo env GOST_NODE_HOST="${{GOST_NODE_HOST:-}}" bash "$t/install.sh")'''

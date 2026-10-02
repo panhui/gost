@@ -3,7 +3,9 @@
 import argparse
 import json
 import os
+import platform
 import re
+import secrets
 import signal
 import ssl
 import subprocess
@@ -157,7 +159,14 @@ def main():
     directory = Path(args.directory)
     if args.enroll:
         settings = {'panel_url': os.environ['PANEL_URL'], 'ca_file': str(directory / 'panel-ca.pem')}
-        settings.update(request(settings, '/agent/enroll', {'token': os.environ['INSTALL_TOKEN']}))
+        identity = directory / 'installation-id'
+        if not identity.exists():
+            identity.write_text(secrets.token_hex(32))
+            os.chmod(identity, 0o600)
+        previous = json.loads((directory / 'agent.json').read_text()) if (directory / 'agent.json').exists() else {}
+        settings.update(request(settings, '/agent/enroll', {'token': os.environ['INSTALL_TOKEN'],
+            'machine_id': identity.read_text().strip(), 'name': (platform.node() or 'Linux 设备')[:64],
+            'host': os.getenv('GOST_NODE_HOST', ''), 'previous_token': previous.get('token', '')}))
         atomic_json(directory / 'agent.json', settings)
         (directory / 'revoked').unlink(missing_ok=True)
     else:

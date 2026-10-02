@@ -199,7 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                                 'text/x-shellscript; charset=utf-8', {'Content-Disposition': 'attachment; filename="install-node.sh"'})
         if path == '/agent/enroll' and method == 'POST':
             data = self.body()
-            return self.respond(200, store.enroll(str(data.get('token', ''))))
+            return self.respond(200, store.enroll(str(data.get('token', '')), data, self.client_address[0]))
         if path.startswith('/agent/'):
             node_id = self.node_identity()
             if not node_id:
@@ -244,6 +244,23 @@ class Handler(BaseHTTPRequestHandler):
                 store.audit('修改管理员密码，注销所有会话')
             return self.respond(200, {'ok': True}, extra={'Set-Cookie': self.cookie('', 0)})
         parts = path.strip('/').split('/')
+        if len(parts) >= 2 and parts[:2] == ['api', 'groups']:
+            if len(parts) == 2 and method == 'POST':
+                return self.respond(201, {'id': store.save_group(self.body())})
+            if len(parts) == 3 and method == 'PUT':
+                return self.respond(200, {'id': store.save_group(self.body(), parts[2])})
+            if len(parts) == 3 and method == 'DELETE':
+                store.delete_group(parts[2])
+                return self.respond(200, {'ok': True})
+            if len(parts) == 4 and parts[3] == 'install' and method == 'POST':
+                if not self.server.secure:
+                    raise ValueError('生成安装脚本需要面板启用 HTTPS')
+                options = self.body()
+                if type(options.get('regenerate', False)) is not bool:
+                    raise ValueError('regenerate 必须为布尔值')
+                token = store.group_installation(parts[2], options.get('regenerate', False))
+                return self.respond(200, {'command': install_command(self.server.public_url, self.server.certificate, token),
+                    'script': install_script(self.server.public_url, self.server.certificate, token), 'expires_in': None})
         if len(parts) >= 2 and parts[:2] == ['api', 'nodes']:
             if len(parts) == 2 and method == 'POST':
                 return self.respond(201, {'id': store.save_node(self.body())})

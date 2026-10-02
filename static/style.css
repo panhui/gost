@@ -3,3 +3,5 @@
 
 .connection-info{grid-column:1/-1;border:1px solid var(--line);border-radius:7px;padding:13px 14px;font-size:11px}.connection-info p{margin:9px 0 0;font-size:11px}.target-input{min-height:145px;resize:vertical;line-height:1.8;font-family:ui-monospace,monospace}.target-input::placeholder{color:#abb3bf}.advanced{grid-column:1/-1;background:#fafbfc;border:1px solid var(--line);border-radius:7px;padding:13px;font-size:11px}.advanced summary{cursor:pointer;color:#637084}.advanced .fields{margin-top:15px}.modal-body .notice{margin-bottom:8px}#modal-content{display:flex;flex-direction:column;max-height:90vh}.modal-head,.modal-foot{flex-shrink:0}#editor{display:flex;flex-direction:column;min-height:0}.modal-body{min-height:0;overflow-y:auto}.modal-body .fields{gap:13px}
 dialog{overflow:hidden}#modal-content{max-height:calc(90vh - 2px)}
+
+.group-panel{margin-bottom:24px}.group-heading{gap:16px;flex-wrap:wrap}.group-heading h2 .pill{margin-left:8px;font-size:12px}.group-panel .pill+.pill{margin-left:6px}.group-heading .row-actions{flex-wrap:wrap}

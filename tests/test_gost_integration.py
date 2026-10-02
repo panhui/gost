@@ -68,6 +68,7 @@ class GOSTIntegration(test_panel.APITests):
     test_authentication_csrf_and_node_isolation = None
     test_rate_limit_and_security_headers = None
     test_upgrade_requires_login_csrf_and_enabled_helper = None
+    test_group_enrollment_shared_command_isolated_devices_and_csrf = None
     test_authenticated_cached_asset_download_and_expired_credentials = None
 
     def setUp(self):
@@ -157,7 +158,8 @@ class GOSTIntegration(test_panel.APITests):
             for nid in [exit_node,entry]:
                 folder=Path(self.temp.name)/('direct-'+nid);folder.mkdir()
                 atomic_json(folder/'agent.json',{})
-                agent=Agent(folder,BINARY);agent.apply(self.store.config(nid));agents.append(agent)
+                agent=Agent(folder,BINARY);payload=self.store.config(nid);agent.apply(payload);agents.append(agent)
+                self.store.heartbeat(nid, {'running':True,'applied':payload['revision']})
             self.assertEqual(tcp_roundtrip(listen),b'hello through TLS')
             result = diagnose(self.store, rid)
             self.assertTrue(all(c['ok'] for c in result['checks']), result)

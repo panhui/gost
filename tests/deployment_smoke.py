@@ -24,8 +24,8 @@ def main():
 
     result, headers = call('/api/login', {'password': os.environ['SMOKE_PASSWORD']})
     cookie, csrf = headers['Set-Cookie'].split(';')[0], result['csrf']
-    node, _ = call('/api/nodes', {'name': 'CI exit', 'role': 'exit', 'host': '127.0.0.1'})
-    generated, _ = call('/api/nodes/' + node['id'] + '/install', {})
+    group, _ = call('/api/groups', {'name': 'CI exits', 'role': 'exit', 'offline_after':60})
+    generated, _ = call('/api/groups/' + group['id'] + '/install', {})
     # Cached official releases must exist before installation; the node script
     # itself must use only the panel download endpoint, without GitHub access.
     for arch in ['amd64', 'arm64']:
@@ -38,6 +38,12 @@ def main():
         script.write_text(generated['script'])
         os.chmod(script, 0o600)
         subprocess.run(['bash', str(script)], check=True, timeout=240)
+        # Reusing the same group command on this machine must keep its identity.
+        first_identity = json.loads(Path('/var/lib/gost-agent/agent.json').read_text())['node_id']
+        subprocess.run(['bash', str(script)], check=True, timeout=240)
+        second_identity = json.loads(Path('/var/lib/gost-agent/agent.json').read_text())['node_id']
+        if first_identity != second_identity:
+            raise RuntimeError('Group reinstall duplicated the device')
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         state, _ = call('/api/state')
@@ -46,6 +52,9 @@ def main():
         time.sleep(1)
     else:
         raise RuntimeError('Installed systemd agent did not come online')
+    if len(state['nodes']) != 1 or state['nodes'][0]['group_id'] != group['id']:
+        raise RuntimeError('Installed device did not join its group')
+    node = state['nodes'][0]
     for service, expected_user in [('gost-panel', 'gost-panel'), ('gost-agent', 'gost-agent')]:
         subprocess.run(['systemctl', 'is-active', '--quiet', service], check=True)
         actual_user = subprocess.check_output(['systemctl', 'show', '-p', 'User', '--value', service], text=True).strip()
@@ -70,7 +79,7 @@ def main():
     else:
         raise RuntimeError('One-click upgrade did not complete')
     state, _ = call('/api/state')
-    if state['nodes'][0]['id'] != node['id'] or Path('/var/lib/gost-panel/panel-cert.pem').read_bytes() != before_cert:
+    if state['groups'][0]['id'] != group['id'] or state['nodes'][0]['id'] != node['id'] or Path('/var/lib/gost-panel/panel-cert.pem').read_bytes() != before_cert:
         raise RuntimeError('Upgrade did not preserve node or certificate')
     if not Path('/var/lib/gost-panel-upgrade/panel-before-upgrade.db').is_file():
         raise RuntimeError('Upgrade did not back up the database')

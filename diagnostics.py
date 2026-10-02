@@ -78,9 +78,16 @@ def diagnose(store, rule_id):
         rule = dict(row)
         if not rule['enabled']:
             raise ValueError('请先启用规则并等待节点同步')
-        entry, exit_node = store.node(rule['entry_id']), store.node(rule['exit_id'])
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        entry_result = pool.submit(check_entry, entry, rule)
-        exit_result = pool.submit(check_exit, exit_node, rule)
-        checks = [entry_result.result(), exit_result.result()]
-    return {'checks': checks, 'scope': '检测由面板服务器发起。入口到出口的实际路由、客户端网络和业务协议仍需从客户端验证；多个落地目标仅检测出口本次选中的一个。'}
+        entries = [n for g in store.group_path(rule['entry_id']) for n in store.members(g['id']) if n['enabled']][:8]
+        exits = [n for g in store.group_path(rule['exit_id']) for n in store.members(g['id']) if n['enabled']][:8]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = []
+        for checker, members in ((check_entry, entries), (check_exit, exits)):
+            for member in members:
+                futures.append((member['name'], pool.submit(checker, member, rule)))
+        checks = [{**future.result(), 'label': title + ' · ' + future.result()['label']} for title, future in futures]
+    if not entries:
+        checks.insert(0, {'label': '入口设备组', 'address': '', 'ok': False, 'message': '没有启用的入口设备，请先执行组安装命令'})
+    if not exits:
+        checks.append({'label': '出口设备组', 'address': '', 'ok': False, 'message': '没有启用的出口设备，请先执行组安装命令'})
+    return {'checks': checks, 'scope': '检测由面板服务器发起，每侧最多检查 8 台启用的设备，包含备用组。入口到出口的实际路由、客户端网络和业务协议仍需从客户端验证；多个落地目标仅检测出口本次选中的一个。'}

@@ -28,8 +28,9 @@ class PanelTests(unittest.TestCase):
 
     def test_real_configuration_and_no_secret_leak(self):
         rid = self.store.save_rule(self.rule)
-        entry = self.store.config(self.entry)
         exit_config = self.store.config(self.exit)
+        self.store.heartbeat(self.exit, {'running':True, 'applied':exit_config['revision']})
+        entry = self.store.config(self.entry)
         self.assertEqual(entry['config']['chains'][0]['hops'][0]['nodes'][0]['dialer']['tls']['secure'], True)
         self.assertNotIn('server.key', entry['files'])
         self.assertEqual([x['addr'] for x in exit_config['config']['services'][0]['forwarder']['nodes']], ['127.0.0.1:19080','[::1]:19081'])
@@ -56,8 +57,8 @@ class PanelTests(unittest.TestCase):
             targets('$(whoami):443')
         with self.assertRaises(ValueError):
             targets('example.com:0')
-        with self.assertRaisesRegex(ValueError,'先删除'):
-            self.store.delete_node(self.entry)
+        with self.assertRaisesRegex(ValueError,'先'):
+            self.store.delete_group(self.entry)
         rid = self.store.save_rule({**self.rule,'listen_port':None,'tunnel_port':None})
         rule = next(r for r in self.store.snapshot()['rules'] if r['id']==rid)
         self.assertTrue(2000 <= rule['listen_port'] <= 60000)
@@ -208,6 +209,32 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.call('/api/upgrade','POST',{})[0],400)
         self.assertEqual(self.call('/api/rules/missing/diagnose','POST',{},csrf=False)[0],403)
         self.assertEqual(self.call('/api/rules/missing/diagnose','POST',{})[0],400)
+
+    def test_group_enrollment_shared_command_isolated_devices_and_csrf(self):
+        self.login()
+        payload = {'name':'出口组','role':'exit','offline_after':60}
+        self.assertEqual(self.call('/api/groups','POST',payload,csrf=False)[0],403)
+        status,result,_=self.call('/api/groups','POST',payload)
+        self.assertEqual(status,201)
+        gid=result['id']
+        status,generated,_=self.call('/api/groups/'+gid+'/install','POST',{})
+        self.assertEqual(status,200)
+        self.assertIsNone(generated['expires_in'])
+        self.assertEqual(self.call('/api/groups/'+gid+'/install','POST',{})[1]['command'],generated['command'])
+        token=self.store.group_installation(gid)
+        devices=[]
+        for identity in ('a'*32,'b'*32):
+            status,device,_=self.call('/agent/enroll','POST',{'token':token,'machine_id':identity,'name':'CI device'})
+            self.assertEqual(status,200)
+            self.assertEqual(device['group_id'],gid)
+            devices.append(device)
+        self.assertNotEqual(devices[0]['node_id'],devices[1]['node_id'])
+        self.assertEqual(self.call('/install/'+token)[0],200)
+        self.assertEqual(self.call('/api/state')[1]['groups'][0]['node_count'],2)
+        self.assertEqual(self.call('/api/groups/'+gid+'/install','POST',{'regenerate':True})[0],200)
+        self.assertEqual(self.call('/install/'+token)[0],400)
+        self.assertEqual(self.call('/agent/config',token=devices[0]['token'])[0],200)
+        self.assertEqual(self.call('/agent/config',token=devices[1]['token'])[0],200)
 
     def test_rate_limit_and_security_headers(self):
         status,_,headers=self.call('/')
