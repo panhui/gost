@@ -16,7 +16,8 @@ umask 077
 command -v systemctl >/dev/null || {{ echo "需要 systemd Linux 系统" >&2; exit 1; }}
 if command -v apt-get >/dev/null; then
   apt-get update
-  apt-get install -y python3 curl ca-certificates tar
+  echo '等待其他 apt/dpkg 任务完成（最多 10 分钟）…'
+  apt-get -o DPkg::Lock::Timeout=600 install -y python3 curl ca-certificates tar
 elif command -v dnf >/dev/null; then
   dnf install -y python3 curl ca-certificates tar
 else
